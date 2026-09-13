@@ -163,7 +163,7 @@ function loadSymbolDetails(symbolId) {
       }
       currentSymbol = {
         symbolId,
-        lotSize: pick(raw, 'LotSize', 'lotSize') || 100000,
+        lotSize: pick(raw, 'LotSize', 'lotSize') || 10000000,
         minVolume: pick(raw, 'MinVolume', 'minVolume'),
         maxVolume: pick(raw, 'MaxVolume', 'maxVolume'),
         stepVolume: pick(raw, 'StepVolume', 'stepVolume'),
@@ -255,10 +255,13 @@ function recalculate() {
   }
 
   const priceDistance = Math.abs(entryPrice - sl);
-  const contractSize = currentSymbol.lotSize || 100000;
+  const rawLotSize = currentSymbol.lotSize || 10000000;
+  // For RISK math we need the REAL contract size (instrument units
+  // per 1.0 lot) — the raw LotSize field is scaled by 100.
+  const realContractSize = rawLotSize / 100;
 
   const volumeInUnits = risk / priceDistance;
-  let volumeInLots = volumeInUnits / contractSize;
+  let volumeInLots = volumeInUnits / realContractSize;
 
   const minVol = (currentSymbol.minVolume || 100) / 100;
   const stepVol = (currentSymbol.stepVolume || 100) / 100;
@@ -268,7 +271,10 @@ function recalculate() {
   volumeInLots = Math.round(volumeInLots / stepVol) * stepVol;
 
   lotResultEl.textContent = volumeInLots.toFixed(2) + ' لات';
-  lotResultEl.dataset.units = Math.round(volumeInLots * contractSize);
+  // The order's "volume" field expects the RAW LotSize scale directly
+  // (this is the value that has already been confirmed to execute
+  // correctly against the broker).
+  lotResultEl.dataset.units = Math.round(volumeInLots * rawLotSize);
   updateConfirmButton();
 }
 
