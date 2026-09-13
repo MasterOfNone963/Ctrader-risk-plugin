@@ -1,0 +1,20 @@
+{
+  "name": "ctrader-risk-plugin",
+  "version": "1.0.0",
+  "description": "cTrader WebView plugin: risk-based auto lot size calculator",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@spotware-web-team/sdk": "latest",
+    "@spotware-web-team/sdk-external-api": "latest",
+    "rxjs": "^7.8.1",
+    "@veksa/logger": "latest"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
