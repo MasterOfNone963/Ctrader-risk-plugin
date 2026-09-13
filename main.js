@@ -263,6 +263,13 @@ function recalculate() {
   const minVol = (currentSymbol.minVolume || 1000) / 100 / contractSize;
   const stepVol = (currentSymbol.stepVolume || 1000) / 100 / contractSize;
   const maxVol = (currentSymbol.maxVolume || 10000000) / 100 / contractSize;
+  debugBox.textContent =
+    'دیباگ حجم: minVolume خام=' + currentSymbol.minVolume +
+    ' | stepVolume خام=' + currentSymbol.stepVolume +
+    ' | maxVolume خام=' + currentSymbol.maxVolume +
+    ' | lotSize=' + contractSize +
+    ' | minVol محاسبه‌شده=' + minVol +
+    ' | stepVol محاسبه‌شده=' + stepVol;
 
   volumeInLots = Math.max(minVol, Math.min(maxVol, volumeInLots));
   volumeInLots = Math.round(volumeInLots / stepVol) * stepVol;
