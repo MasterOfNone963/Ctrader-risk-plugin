@@ -92,12 +92,22 @@ setTimeout(() => {
 // 2) Load symbol list -> fill dropdown
 // ============================================================
 function loadSymbols() {
-  getLightSymbolList(adapter, {}).pipe(take(1)).subscribe((res) => {
-    symbols = res.symbol || res.symbols || [];
-    symbolSelect.innerHTML = symbols
-      .map((s) => `<option value="${s.symbolId}">${s.symbolName || s.name}</option>`)
-      .join('');
-    if (symbols.length) loadSymbolDetails(symbols[0].symbolId);
+  getLightSymbolList(adapter, {}).pipe(take(1)).subscribe({
+    next: (res) => {
+      symbols = res.symbol || res.symbols || res.lightSymbol || [];
+      if (!symbols.length) {
+        // Debug: show the raw shape of the response so we can see the real field names
+        warnBox.textContent = 'دیباگ getLightSymbolList: ' + JSON.stringify(res).slice(0, 500);
+        return;
+      }
+      symbolSelect.innerHTML = symbols
+        .map((s) => `<option value="${s.symbolId}">${s.symbolName || s.name}</option>`)
+        .join('');
+      loadSymbolDetails(symbols[0].symbolId);
+    },
+    error: (err) => {
+      warnBox.textContent = 'خطا در getLightSymbolList: ' + (err?.message || JSON.stringify(err));
+    },
   });
 }
 
