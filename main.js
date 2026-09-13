@@ -33,26 +33,58 @@ let liveAsk = null;
 let selectedSide = null; // 'BUY' | 'SELL'
 
 // ============================================================
+// DEBUG HELPERS — show everything on screen since mobile has no console
+// ============================================================
+function setStatus(msg) {
+  statusBox.textContent = msg;
+}
+
+window.onerror = function (message, source, lineno, colno, error) {
+  setStatus('خطای جاوااسکریپت: ' + message + ' (خط ' + lineno + ')');
+};
+window.addEventListener('unhandledrejection', (event) => {
+  setStatus('خطای Promise: ' + (event.reason?.message || JSON.stringify(event.reason)));
+});
+
+// ============================================================
 // 1) Connect to the cTrader host (handshake)
 // ============================================================
-adapter = createClientAdapter({});
+setStatus('در حال ساخت adapter...');
+let handshakeDone = false;
 
-handleConfirmEvent(adapter, {}).pipe(take(1)).subscribe();
+try {
+  adapter = createClientAdapter({});
+  setStatus('adapter ساخته شد، در حال ارسال register...');
+} catch (e) {
+  setStatus('خطا در ساخت adapter: ' + e.message);
+}
+
+handleConfirmEvent(adapter, {}).pipe(take(1)).subscribe({
+  error: (e) => setStatus('خطا در confirm اولیه: ' + (e?.message || e)),
+});
 
 registerEvent(adapter)
   .pipe(
     take(1),
     tap(() => {
+      handshakeDone = true;
       handleConfirmEvent(adapter, {}).pipe(take(1)).subscribe();
-      statusBox.textContent = 'متصل به cTrader ✔';
+      setStatus('متصل به cTrader ✔');
       loadSymbols();
     }),
-    catchError(() => {
-      statusBox.textContent = 'خطا در اتصال به cTrader';
+    catchError((err) => {
+      setStatus('خطا در register: ' + (err?.message || JSON.stringify(err)));
       return [];
     })
   )
   .subscribe();
+
+// If nothing happens after a few seconds, tell the user clearly
+setTimeout(() => {
+  if (!handshakeDone) {
+    setStatus('هاست cTrader به درخواست register جواب نداد (timeout). این پلاگین احتمالاً بیرون از محیط cTrader باز شده یا SDK با نسخه‌ی هاست هماهنگ نیست.');
+  }
+}, 6000);
 
 // ============================================================
 // 2) Load symbol list -> fill dropdown
