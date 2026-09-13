@@ -9,6 +9,7 @@ import {
   createNewOrder,
 } from '@spotware-web-team/sdk';
 import { take, tap, catchError } from 'rxjs/operators';
+import { createLogger } from '@veksa/logger';
 
 // ---------- DOM refs ----------
 const symbolSelect = document.getElementById('symbolSelect');
@@ -53,7 +54,8 @@ setStatus('در حال ساخت adapter...');
 let handshakeDone = false;
 
 try {
-  adapter = createClientAdapter({});
+  const logger = createLogger(false);
+  adapter = createClientAdapter({ logger });
   setStatus('adapter ساخته شد، در حال ارسال register...');
 } catch (e) {
   setStatus('خطا در ساخت adapter: ' + e.message);
