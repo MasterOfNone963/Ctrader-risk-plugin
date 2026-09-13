@@ -22,6 +22,7 @@ const tpInput = document.getElementById('tpInput');
 const riskInput = document.getElementById('riskInput');
 const lotResultEl = document.getElementById('lotResult');
 const warnBox = document.getElementById('warnBox');
+const debugBox = document.getElementById('debugBox');
 const confirmBtn = document.getElementById('confirmBtn');
 const statusBox = document.getElementById('statusBox');
 
@@ -124,7 +125,7 @@ function loadSymbols() {
       const data = unwrap(res);
       symbols = pick(data, 'Symbol', 'symbol', 'Symbols', 'symbols') || [];
       if (!symbols.length) {
-        warnBox.textContent = 'دیباگ getLightSymbolList: ' + JSON.stringify(res).slice(0, 500);
+        debugBox.textContent = 'دیباگ getLightSymbolList: ' + JSON.stringify(res).slice(0, 500);
         return;
       }
       symbolSelect.innerHTML = symbols
@@ -138,7 +139,7 @@ function loadSymbols() {
       loadSymbolDetails(firstId);
     },
     error: (err) => {
-      warnBox.textContent = 'خطا در getLightSymbolList: ' + (err?.message || JSON.stringify(err));
+      debugBox.textContent = 'خطا در getLightSymbolList: ' + (err?.message || JSON.stringify(err));
     },
   });
 }
@@ -157,7 +158,7 @@ function loadSymbolDetails(symbolId) {
       const list = pick(data, 'Symbol', 'symbol', 'Symbols', 'symbols') || [];
       const raw = list[0];
       if (!raw) {
-        warnBox.textContent = 'دیباگ getSymbol: ' + JSON.stringify(res).slice(0, 500);
+        debugBox.textContent = 'دیباگ getSymbol: ' + JSON.stringify(res).slice(0, 500);
         return;
       }
       currentSymbol = {
@@ -170,13 +171,18 @@ function loadSymbolDetails(symbolId) {
         stepVolume: pick(raw, 'StepVolume', 'stepVolume'),
       };
       if (currentSymbol.digits == null) {
-        warnBox.textContent = 'دیباگ: فیلد Digits پیدا نشد. داده‌ی خام نماد: ' + JSON.stringify(raw).slice(0, 500);
+        debugBox.textContent = 'دیباگ: فیلد Digits پیدا نشد. داده‌ی خام نماد: ' + JSON.stringify(raw).slice(0, 500);
+      } else {
+        debugBox.textContent =
+          'دیباگ نماد: digits=' + currentSymbol.digits +
+          ' | lotSize=' + currentSymbol.lotSize +
+          ' | کلیدهای خام: ' + Object.keys(raw).join(', ');
       }
       subscribeToQuotes(symbolId);
       recalculate();
     },
     error: (err) => {
-      warnBox.textContent = 'خطا در getSymbol: ' + (err?.message || JSON.stringify(err));
+      debugBox.textContent = 'خطا در getSymbol: ' + (err?.message || JSON.stringify(err));
     },
   });
 }
@@ -188,7 +194,7 @@ let quoteSub;
 function subscribeToQuotes(symbolId) {
   subscribeQuotes(adapter, { symbolId: [symbolId] }).pipe(take(1)).subscribe({
     error: (err) => {
-      warnBox.textContent = 'خطا در subscribeQuotes: ' + (err?.message || JSON.stringify(err));
+      debugBox.textContent = 'خطا در subscribeQuotes: ' + (err?.message || JSON.stringify(err));
     },
   });
   if (quoteSub) quoteSub.unsubscribe();
