@@ -206,6 +206,10 @@ function subscribeToQuotes(symbolId) {
     const ask = pick(q, 'Ask', 'ask');
     if (bid != null) liveBid = fromServerPrice(bid, currentSymbol);
     if (ask != null) liveAsk = fromServerPrice(ask, currentSymbol);
+    debugBox.textContent =
+      'دیباگ قیمت لحظه‌ای: raw ask=' + ask +
+      ' | digits فعلی=' + currentSymbol?.digits +
+      ' | ask تبدیل‌شده=' + liveAsk;
     bidPriceEl.textContent = liveBid ?? '--';
     askPriceEl.textContent = liveAsk ?? '--';
     recalculate();
@@ -214,9 +218,7 @@ function subscribeToQuotes(symbolId) {
 
 function fromServerPrice(raw, sym) {
   if (!sym || sym.digits == null) return raw;
-  // cTrader sends raw prices with ONE extra fractional digit beyond
-  // the symbol's official "Digits" value (fractional-pip precision).
-  return Number(raw) / Math.pow(10, sym.digits + 1);
+  return Number(raw) / Math.pow(10, sym.digits);
 }
 
 // ============================================================
