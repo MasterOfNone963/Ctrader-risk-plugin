@@ -9,10 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@spotware-web-team/sdk": "latest",
-    "@spotware-web-team/sdk-external-api": "latest",
-    "rxjs": "^7.8.1",
-    "@veksa/logger": "latest"
+    "@spotware-web-team/sdk": "0.0.9",
+    "@spotware-web-team/sdk-external-api": "0.0.5",
+    "rxjs": "7.8.2",
+    "@veksa/logger": "1.0.6"
   },
   "devDependencies": {
     "vite": "^5.4.0"
