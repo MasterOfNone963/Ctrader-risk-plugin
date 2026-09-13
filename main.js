@@ -163,21 +163,12 @@ function loadSymbolDetails(symbolId) {
       }
       currentSymbol = {
         symbolId,
-        digits: pick(raw, 'Digits', 'digits', 'PriceDigits'),
-        pipPosition: pick(raw, 'PipPosition', 'pipPosition'),
         lotSize: pick(raw, 'LotSize', 'lotSize') || 100000,
         minVolume: pick(raw, 'MinVolume', 'minVolume'),
         maxVolume: pick(raw, 'MaxVolume', 'maxVolume'),
         stepVolume: pick(raw, 'StepVolume', 'stepVolume'),
       };
-      if (currentSymbol.digits == null) {
-        debugBox.textContent = 'دیباگ: فیلد Digits پیدا نشد. داده‌ی خام نماد: ' + JSON.stringify(raw).slice(0, 500);
-      } else {
-        debugBox.textContent =
-          'دیباگ نماد: digits=' + currentSymbol.digits +
-          ' | lotSize=' + currentSymbol.lotSize +
-          ' | کلیدهای خام: ' + Object.keys(raw).join(', ');
-      }
+      debugBox.textContent = '';
       subscribeToQuotes(symbolId);
       recalculate();
     },
@@ -204,21 +195,18 @@ function subscribeToQuotes(symbolId) {
     if (qSymbolId !== symbolId) return;
     const bid = pick(q, 'Bid', 'bid');
     const ask = pick(q, 'Ask', 'ask');
-    if (bid != null) liveBid = fromServerPrice(bid, currentSymbol);
-    if (ask != null) liveAsk = fromServerPrice(ask, currentSymbol);
-    debugBox.textContent =
-      'دیباگ قیمت لحظه‌ای: raw ask=' + ask +
-      ' | digits فعلی=' + currentSymbol?.digits +
-      ' | ask تبدیل‌شده=' + liveAsk;
+    if (bid != null) liveBid = fromServerPrice(bid);
+    if (ask != null) liveAsk = fromServerPrice(ask);
     bidPriceEl.textContent = liveBid ?? '--';
     askPriceEl.textContent = liveAsk ?? '--';
     recalculate();
   });
 }
 
-function fromServerPrice(raw, sym) {
-  if (!sym || sym.digits == null) return raw;
-  return Number(raw) / Math.pow(10, sym.digits);
+// cTrader always transmits prices scaled by a fixed factor of 100000,
+// regardless of the symbol's own "Digits" field.
+function fromServerPrice(raw) {
+  return Number(raw) / 100000;
 }
 
 // ============================================================
