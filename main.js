@@ -214,7 +214,9 @@ function subscribeToQuotes(symbolId) {
 
 function fromServerPrice(raw, sym) {
   if (!sym || sym.digits == null) return raw;
-  return Number(raw) / Math.pow(10, sym.digits);
+  // cTrader sends raw prices with ONE extra fractional digit beyond
+  // the symbol's official "Digits" value (fractional-pip precision).
+  return Number(raw) / Math.pow(10, sym.digits + 1);
 }
 
 // ============================================================
