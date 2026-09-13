@@ -57,10 +57,20 @@ window.addEventListener('unhandledrejection', (event) => {
 function unwrap(res) {
   return res?.payload ?? res;
 }
+function ciGet(obj, name) {
+  if (!obj) return undefined;
+  const key = Object.keys(obj).find((k) => k.toLowerCase() === name.toLowerCase());
+  return key !== undefined ? obj[key] : undefined;
+}
 function pick(obj, ...keys) {
   if (!obj) return undefined;
   for (const k of keys) {
     if (obj[k] !== undefined) return obj[k];
+  }
+  // fallback: case-insensitive match against every key name given
+  for (const k of keys) {
+    const v = ciGet(obj, k);
+    if (v !== undefined) return v;
   }
   return undefined;
 }
@@ -152,13 +162,16 @@ function loadSymbolDetails(symbolId) {
       }
       currentSymbol = {
         symbolId,
-        digits: pick(raw, 'Digits', 'digits'),
+        digits: pick(raw, 'Digits', 'digits', 'PriceDigits'),
         pipPosition: pick(raw, 'PipPosition', 'pipPosition'),
         lotSize: pick(raw, 'LotSize', 'lotSize') || 100000,
         minVolume: pick(raw, 'MinVolume', 'minVolume'),
         maxVolume: pick(raw, 'MaxVolume', 'maxVolume'),
         stepVolume: pick(raw, 'StepVolume', 'stepVolume'),
       };
+      if (currentSymbol.digits == null) {
+        warnBox.textContent = 'دیباگ: فیلد Digits پیدا نشد. داده‌ی خام نماد: ' + JSON.stringify(raw).slice(0, 500);
+      }
       subscribeToQuotes(symbolId);
       recalculate();
     },
