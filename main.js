@@ -34,18 +34,36 @@ let liveAsk = null;
 let selectedSide = null; // 'BUY' | 'SELL'
 
 // ============================================================
-// DEBUG HELPERS — show everything on screen since mobile has no console
+// DEBUG HELPERS
 // ============================================================
 function setStatus(msg) {
   statusBox.textContent = msg;
 }
-
-window.onerror = function (message, source, lineno, colno, error) {
+window.onerror = function (message, source, lineno) {
   setStatus('خطای جاوااسکریپت: ' + message + ' (خط ' + lineno + ')');
 };
 window.addEventListener('unhandledrejection', (event) => {
   setStatus('خطای Promise: ' + (event.reason?.message || JSON.stringify(event.reason)));
 });
+
+// ============================================================
+// FIELD-ACCESS HELPERS
+// The cTrader host sends raw protobuf-style JSON: fields are
+// PascalCase (Id, Name, Digits...) and the real data usually sits
+// one level deeper, under `.payload`. These helpers read a value
+// under any of several possible key spellings so the UI works
+// regardless of exact casing.
+// ============================================================
+function unwrap(res) {
+  return res?.payload ?? res;
+}
+function pick(obj, ...keys) {
+  if (!obj) return undefined;
+  for (const k of keys) {
+    if (obj[k] !== undefined) return obj[k];
+  }
+  return undefined;
+}
 
 // ============================================================
 // 1) Connect to the cTrader host (handshake)
@@ -81,10 +99,9 @@ registerEvent(adapter)
   )
   .subscribe();
 
-// If nothing happens after a few seconds, tell the user clearly
 setTimeout(() => {
   if (!handshakeDone) {
-    setStatus('هاست cTrader به درخواست register جواب نداد (timeout). این پلاگین احتمالاً بیرون از محیط cTrader باز شده یا SDK با نسخه‌ی هاست هماهنگ نیست.');
+    setStatus('هاست cTrader به درخواست register جواب نداد (timeout).');
   }
 }, 6000);
 
@@ -94,16 +111,21 @@ setTimeout(() => {
 function loadSymbols() {
   getLightSymbolList(adapter, {}).pipe(take(1)).subscribe({
     next: (res) => {
-      symbols = res.symbol || res.symbols || res.lightSymbol || [];
+      const data = unwrap(res);
+      symbols = pick(data, 'Symbol', 'symbol', 'Symbols', 'symbols') || [];
       if (!symbols.length) {
-        // Debug: show the raw shape of the response so we can see the real field names
         warnBox.textContent = 'دیباگ getLightSymbolList: ' + JSON.stringify(res).slice(0, 500);
         return;
       }
       symbolSelect.innerHTML = symbols
-        .map((s) => `<option value="${s.symbolId}">${s.symbolName || s.name}</option>`)
+        .map((s) => {
+          const id = pick(s, 'Id', 'id', 'SymbolId', 'symbolId');
+          const name = pick(s, 'Name', 'name', 'SymbolName', 'symbolName');
+          return `<option value="${id}">${name}</option>`;
+        })
         .join('');
-      loadSymbolDetails(symbols[0].symbolId);
+      const firstId = pick(symbols[0], 'Id', 'id', 'SymbolId', 'symbolId');
+      loadSymbolDetails(firstId);
     },
     error: (err) => {
       warnBox.textContent = 'خطا در getLightSymbolList: ' + (err?.message || JSON.stringify(err));
@@ -119,10 +141,30 @@ symbolSelect.addEventListener('change', () => {
 // 3) Full symbol details (digits, pip position, volume limits)
 // ============================================================
 function loadSymbolDetails(symbolId) {
-  getSymbol(adapter, { symbolId: [symbolId] }).pipe(take(1)).subscribe((res) => {
-    currentSymbol = (res.symbol || res.symbols || [])[0];
-    subscribeToQuotes(symbolId);
-    recalculate();
+  getSymbol(adapter, { symbolId: [symbolId] }).pipe(take(1)).subscribe({
+    next: (res) => {
+      const data = unwrap(res);
+      const list = pick(data, 'Symbol', 'symbol', 'Symbols', 'symbols') || [];
+      const raw = list[0];
+      if (!raw) {
+        warnBox.textContent = 'دیباگ getSymbol: ' + JSON.stringify(res).slice(0, 500);
+        return;
+      }
+      currentSymbol = {
+        symbolId,
+        digits: pick(raw, 'Digits', 'digits'),
+        pipPosition: pick(raw, 'PipPosition', 'pipPosition'),
+        lotSize: pick(raw, 'LotSize', 'lotSize') || 100000,
+        minVolume: pick(raw, 'MinVolume', 'minVolume'),
+        maxVolume: pick(raw, 'MaxVolume', 'maxVolume'),
+        stepVolume: pick(raw, 'StepVolume', 'stepVolume'),
+      };
+      subscribeToQuotes(symbolId);
+      recalculate();
+    },
+    error: (err) => {
+      warnBox.textContent = 'خطا در getSymbol: ' + (err?.message || JSON.stringify(err));
+    },
   });
 }
 
@@ -131,12 +173,20 @@ function loadSymbolDetails(symbolId) {
 // ============================================================
 let quoteSub;
 function subscribeToQuotes(symbolId) {
-  subscribeQuotes(adapter, { symbolId: [symbolId] }).pipe(take(1)).subscribe();
+  subscribeQuotes(adapter, { symbolId: [symbolId] }).pipe(take(1)).subscribe({
+    error: (err) => {
+      warnBox.textContent = 'خطا در subscribeQuotes: ' + (err?.message || JSON.stringify(err));
+    },
+  });
   if (quoteSub) quoteSub.unsubscribe();
-  quoteSub = quoteEvent(adapter).subscribe((q) => {
-    if (q.symbolId !== symbolId) return;
-    if (q.bid != null) liveBid = fromServerPrice(q.bid, currentSymbol);
-    if (q.ask != null) liveAsk = fromServerPrice(q.ask, currentSymbol);
+  quoteSub = quoteEvent(adapter).subscribe((res) => {
+    const q = unwrap(res);
+    const qSymbolId = pick(q, 'SymbolId', 'symbolId');
+    if (qSymbolId !== symbolId) return;
+    const bid = pick(q, 'Bid', 'bid');
+    const ask = pick(q, 'Ask', 'ask');
+    if (bid != null) liveBid = fromServerPrice(bid, currentSymbol);
+    if (ask != null) liveAsk = fromServerPrice(ask, currentSymbol);
     bidPriceEl.textContent = liveBid ?? '--';
     askPriceEl.textContent = liveAsk ?? '--';
     recalculate();
@@ -144,7 +194,7 @@ function subscribeToQuotes(symbolId) {
 }
 
 function fromServerPrice(raw, sym) {
-  if (!sym) return raw;
+  if (!sym || sym.digits == null) return raw;
   return Number(raw) / Math.pow(10, sym.digits);
 }
 
@@ -172,7 +222,7 @@ function recalculate() {
   warnBox.textContent = '';
   const risk = parseFloat(riskInput.value);
   const sl = parseFloat(slInput.value);
-  const entryPrice = selectedSide === 'SELL' ? liveBid : liveAsk; // sell fills on bid, buy fills on ask
+  const entryPrice = selectedSide === 'SELL' ? liveBid : liveAsk;
 
   if (!currentSymbol || !selectedSide || !risk || !sl || !entryPrice) {
     lotResultEl.textContent = '--';
@@ -180,7 +230,6 @@ function recalculate() {
     return;
   }
 
-  // Sanity check: SL must be on the correct side of price
   if (selectedSide === 'BUY' && sl >= entryPrice) {
     warnBox.textContent = 'برای Buy، قیمت SL باید پایین‌تر از قیمت فعلی باشد';
     lotResultEl.textContent = '--';
@@ -197,8 +246,6 @@ function recalculate() {
   const priceDistance = Math.abs(entryPrice - sl);
   const contractSize = currentSymbol.lotSize || 100000;
 
-  // TODO (cross pairs): convert risk/priceDistance through the
-  // conversion rate here if account currency !== quote currency.
   const volumeInUnits = risk / priceDistance;
   let volumeInLots = volumeInUnits / contractSize;
 
@@ -239,7 +286,7 @@ function updateConfirmButton() {
 // ============================================================
 confirmBtn.addEventListener('click', () => {
   const sl = parseFloat(slInput.value);
-  const tp = parseFloat(tpInput.value); // optional
+  const tp = parseFloat(tpInput.value);
   const units = Number(lotResultEl.dataset.units);
 
   if (!currentSymbol || !selectedSide || !units || !sl) {
@@ -263,11 +310,11 @@ confirmBtn.addEventListener('click', () => {
     .pipe(take(1))
     .subscribe({
       next: () => {
-        statusBox.textContent = 'سفارش ارسال شد ✔';
+        setStatus('سفارش ارسال شد ✔');
         confirmBtn.disabled = false;
       },
       error: (err) => {
-        statusBox.textContent = 'خطا در ارسال سفارش: ' + (err?.errorCode || err);
+        setStatus('خطا در ارسال سفارش: ' + (err?.errorCode || err?.message || JSON.stringify(err)));
         confirmBtn.disabled = false;
       },
     });
