@@ -12,6 +12,8 @@ import {
 import { take, tap, catchError } from 'rxjs/operators';
 import { createLogger } from '@veksa/logger';
 
+window.__mainStarted = true;
+
 // ---------- DOM refs ----------
 const symbolSelect = document.getElementById('symbolSelect');
 const bidPriceEl = document.getElementById('bidPrice');
