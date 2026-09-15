@@ -7,9 +7,7 @@ import {
   subscribeQuotes,
   quoteEvent,
   createNewOrder,
-  getTrendbars,
-  subscribeLiveTrendbar,
-  trendbarEvent,
+  getTrendbarList,
 } from '@spotware-web-team/sdk';
 import { take, tap, catchError } from 'rxjs/operators';
 import { createLogger } from '@veksa/logger';
@@ -181,7 +179,10 @@ function loadSymbolDetails(symbolId) {
       };
       debugBox.textContent = '';
       subscribeToQuotes(symbolId);
-      loadCandles(symbolId);
+      currCandleHigh = null;
+      currCandleLow = null;
+      currCandlePeriodStart = null;
+      loadPrevCandle(symbolId);
       recalculate();
     },
     error: (err) => {
@@ -211,6 +212,7 @@ function subscribeToQuotes(symbolId) {
     if (ask != null) liveAsk = fromServerPrice(ask);
     bidPriceEl.textContent = liveBid ?? '--';
     askPriceEl.textContent = liveAsk ?? '--';
+    if (liveBid != null) trackLiveCandle(liveBid);
     recalculate();
   });
 }
@@ -222,17 +224,48 @@ function fromServerPrice(raw) {
 }
 
 // ============================================================
-// Candle (trendbar) high/low — current (live) + previous
+// Candle high/low
+// - Previous (completed) candle: fetched once from the server.
+// - Current (live) candle: tracked ourselves from incoming quote
+//   ticks, since it's simpler and more reliable than depending on
+//   an undocumented live-trendbar subscription.
 // ============================================================
-let liveTrendbarSub;
-const CANDLE_PERIOD = 'M5';
+const CANDLE_MINUTES = 5;
+let currCandleHigh = null;
+let currCandleLow = null;
+let currCandlePeriodStart = null;
 
-function loadCandles(symbolId) {
+function periodStartFor(date) {
+  const ms = CANDLE_MINUTES * 60 * 1000;
+  return Math.floor(date.getTime() / ms) * ms;
+}
+
+function trackLiveCandle(price) {
+  const start = periodStartFor(new Date());
+  if (currCandlePeriodStart !== start) {
+    // New period started — the old "current" candle is now the previous one.
+    if (currCandlePeriodStart != null && currCandleHigh != null) {
+      prevCandleEl.textContent = `prev h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
+    }
+    currCandlePeriodStart = start;
+    currCandleHigh = price;
+    currCandleLow = price;
+  } else {
+    currCandleHigh = Math.max(currCandleHigh, price);
+    currCandleLow = Math.min(currCandleLow, price);
+  }
+  currCandleEl.textContent = `now h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
+}
+
+// Fetch the last completed candle once when a symbol loads, so the
+// "prev" line has real data immediately (before we've tracked a
+// full period ourselves).
+function loadPrevCandle(symbolId) {
   const now = Date.now();
-  const fromTs = now - 30 * 60 * 1000; // last 30 minutes, enough for 2+ M5 bars
-  getTrendbars(adapter, {
+  const fromTs = now - 30 * 60 * 1000;
+  getTrendbarList(adapter, {
     symbolId,
-    period: CANDLE_PERIOD,
+    period: CANDLE_MINUTES === 5 ? 'M5' : 'M1',
     fromTimestamp: fromTs,
     toTimestamp: now,
   })
@@ -241,8 +274,8 @@ function loadCandles(symbolId) {
       next: (res) => {
         const data = unwrap(res);
         const bars = pick(data, 'Trendbar', 'trendbar', 'Trendbars', 'trendbars') || [];
-        if (bars.length < 2) {
-          debugBox.textContent = 'دیباگ کندل: تعداد کندل کافی نبود. پاسخ: ' + JSON.stringify(res).slice(0, 400);
+        if (!bars.length) {
+          debugBox.textContent = 'دیباگ کندل قبلی: خالی بود. پاسخ: ' + JSON.stringify(res).slice(0, 400);
           return;
         }
         const sorted = [...bars].sort((a, b) => {
@@ -250,41 +283,23 @@ function loadCandles(symbolId) {
           const tb = pick(b, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
           return ta - tb;
         });
-        const prevBar = sorted[sorted.length - 2];
-        const currBar = sorted[sorted.length - 1];
-        updateCandleDisplay(prevCandleEl, 'prev', prevBar);
-        updateCandleDisplay(currCandleEl, 'now', currBar);
+        // The last bar returned by history may still be "in progress" —
+        // use the one before it as the last fully completed candle.
+        const bar = sorted.length >= 2 ? sorted[sorted.length - 2] : sorted[sorted.length - 1];
+        const low = pick(bar, 'Low', 'low');
+        const deltaHigh = pick(bar, 'DeltaHigh', 'deltaHigh') || 0;
+        if (low == null) {
+          debugBox.textContent = 'دیباگ کندل قبلی: فیلد Low پیدا نشد. داده خام: ' + JSON.stringify(bar).slice(0, 400);
+          return;
+        }
+        const lowPrice = fromServerPrice(low);
+        const highPrice = fromServerPrice(Number(low) + Number(deltaHigh));
+        prevCandleEl.textContent = `prev h:${highPrice.toFixed(2)} l:${lowPrice.toFixed(2)}`;
       },
       error: (err) => {
-        debugBox.textContent = 'خطا در getTrendbars: ' + (err?.message || JSON.stringify(err));
+        debugBox.textContent = 'خطا در getTrendbarList: ' + (err?.message || JSON.stringify(err));
       },
     });
-
-  if (liveTrendbarSub) liveTrendbarSub.unsubscribe();
-  subscribeLiveTrendbar(adapter, { symbolId, period: CANDLE_PERIOD }).pipe(take(1)).subscribe({
-    error: (err) => {
-      debugBox.textContent = 'خطا در subscribeLiveTrendbar: ' + (err?.message || JSON.stringify(err));
-    },
-  });
-  liveTrendbarSub = trendbarEvent(adapter).subscribe((res) => {
-    const t = unwrap(res);
-    const tSymbolId = pick(t, 'SymbolId', 'symbolId');
-    if (tSymbolId !== symbolId) return;
-    updateCandleDisplay(currCandleEl, 'now', t);
-  });
-}
-
-function updateCandleDisplay(el, label, bar) {
-  if (!bar) return;
-  const low = pick(bar, 'Low', 'low');
-  const deltaHigh = pick(bar, 'DeltaHigh', 'deltaHigh') || 0;
-  if (low == null) {
-    debugBox.textContent = 'دیباگ کندل: فیلد Low پیدا نشد. داده خام: ' + JSON.stringify(bar).slice(0, 400);
-    return;
-  }
-  const lowPrice = fromServerPrice(low);
-  const highPrice = fromServerPrice(Number(low) + Number(deltaHigh));
-  el.textContent = `${label} h:${highPrice.toFixed(2)} l:${lowPrice.toFixed(2)}`;
 }
 
 // ============================================================
