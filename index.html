@@ -103,7 +103,28 @@
   <div class="card">
     <button id="confirmBtn" class="confirm" disabled>ابتدا جهت معامله را انتخاب کنید</button>
     <div class="status" id="statusBox">در حال اتصال به cTrader...</div>
+    <div id="earlyDebug" style="font-size:11px; color:#f87171; text-align:center; margin-top:6px; direction:ltr;"></div>
   </div>
+
+  <script>
+    // This runs BEFORE the module script. If main.js fails to even
+    // start executing (404, blocked import, parse error before our
+    // own window.onerror is set up), this catches it and shows it
+    // directly on screen — no F12 needed.
+    (function () {
+      var box = document.getElementById('earlyDebug');
+      window.__mainStarted = false;
+      window.addEventListener('error', function (e) {
+        box.textContent = 'خطای بارگذاری: ' + (e.message || e.filename || 'unknown') +
+          (e.filename ? ' (' + e.filename + ':' + e.lineno + ')' : '');
+      });
+      setTimeout(function () {
+        if (!window.__mainStarted) {
+          box.textContent = 'main.js اصلاً اجرا نشد (بعد از ۴ ثانیه). احتمالاً مسیر فایل یا build خراب است.';
+        }
+      }, 4000);
+    })();
+  </script>
 
   <script type="module" src="/src/main.js"></script>
 </body>
