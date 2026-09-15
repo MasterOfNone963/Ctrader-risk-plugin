@@ -7,6 +7,9 @@ import {
   subscribeQuotes,
   quoteEvent,
   createNewOrder,
+  getTrendbars,
+  subscribeLiveTrendbar,
+  trendbarEvent,
 } from '@spotware-web-team/sdk';
 import { take, tap, catchError } from 'rxjs/operators';
 import { createLogger } from '@veksa/logger';
@@ -23,6 +26,8 @@ const riskInput = document.getElementById('riskInput');
 const lotResultEl = document.getElementById('lotResult');
 const warnBox = document.getElementById('warnBox');
 const debugBox = document.getElementById('debugBox');
+const currCandleEl = document.getElementById('currCandle');
+const prevCandleEl = document.getElementById('prevCandle');
 const confirmBtn = document.getElementById('confirmBtn');
 const statusBox = document.getElementById('statusBox');
 
@@ -135,8 +140,14 @@ function loadSymbols() {
           return `<option value="${id}">${name}</option>`;
         })
         .join('');
-      const firstId = pick(symbols[0], 'Id', 'id', 'SymbolId', 'symbolId');
-      loadSymbolDetails(firstId);
+      // Default to US100 if it exists in the list; otherwise fall back to the first symbol.
+      const defaultSymbol = symbols.find((s) => {
+        const name = pick(s, 'Name', 'name', 'SymbolName', 'symbolName');
+        return (name || '').toUpperCase() === 'US100';
+      }) || symbols[0];
+      const defaultId = pick(defaultSymbol, 'Id', 'id', 'SymbolId', 'symbolId');
+      symbolSelect.value = defaultId;
+      loadSymbolDetails(defaultId);
     },
     error: (err) => {
       debugBox.textContent = 'خطا در getLightSymbolList: ' + (err?.message || JSON.stringify(err));
@@ -170,6 +181,7 @@ function loadSymbolDetails(symbolId) {
       };
       debugBox.textContent = '';
       subscribeToQuotes(symbolId);
+      loadCandles(symbolId);
       recalculate();
     },
     error: (err) => {
@@ -207,6 +219,72 @@ function subscribeToQuotes(symbolId) {
 // regardless of the symbol's own "Digits" field.
 function fromServerPrice(raw) {
   return Number(raw) / 100000;
+}
+
+// ============================================================
+// Candle (trendbar) high/low — current (live) + previous
+// ============================================================
+let liveTrendbarSub;
+const CANDLE_PERIOD = 'M5';
+
+function loadCandles(symbolId) {
+  const now = Date.now();
+  const fromTs = now - 30 * 60 * 1000; // last 30 minutes, enough for 2+ M5 bars
+  getTrendbars(adapter, {
+    symbolId,
+    period: CANDLE_PERIOD,
+    fromTimestamp: fromTs,
+    toTimestamp: now,
+  })
+    .pipe(take(1))
+    .subscribe({
+      next: (res) => {
+        const data = unwrap(res);
+        const bars = pick(data, 'Trendbar', 'trendbar', 'Trendbars', 'trendbars') || [];
+        if (bars.length < 2) {
+          debugBox.textContent = 'دیباگ کندل: تعداد کندل کافی نبود. پاسخ: ' + JSON.stringify(res).slice(0, 400);
+          return;
+        }
+        const sorted = [...bars].sort((a, b) => {
+          const ta = pick(a, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
+          const tb = pick(b, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
+          return ta - tb;
+        });
+        const prevBar = sorted[sorted.length - 2];
+        const currBar = sorted[sorted.length - 1];
+        updateCandleDisplay(prevCandleEl, 'prev', prevBar);
+        updateCandleDisplay(currCandleEl, 'now', currBar);
+      },
+      error: (err) => {
+        debugBox.textContent = 'خطا در getTrendbars: ' + (err?.message || JSON.stringify(err));
+      },
+    });
+
+  if (liveTrendbarSub) liveTrendbarSub.unsubscribe();
+  subscribeLiveTrendbar(adapter, { symbolId, period: CANDLE_PERIOD }).pipe(take(1)).subscribe({
+    error: (err) => {
+      debugBox.textContent = 'خطا در subscribeLiveTrendbar: ' + (err?.message || JSON.stringify(err));
+    },
+  });
+  liveTrendbarSub = trendbarEvent(adapter).subscribe((res) => {
+    const t = unwrap(res);
+    const tSymbolId = pick(t, 'SymbolId', 'symbolId');
+    if (tSymbolId !== symbolId) return;
+    updateCandleDisplay(currCandleEl, 'now', t);
+  });
+}
+
+function updateCandleDisplay(el, label, bar) {
+  if (!bar) return;
+  const low = pick(bar, 'Low', 'low');
+  const deltaHigh = pick(bar, 'DeltaHigh', 'deltaHigh') || 0;
+  if (low == null) {
+    debugBox.textContent = 'دیباگ کندل: فیلد Low پیدا نشد. داده خام: ' + JSON.stringify(bar).slice(0, 400);
+    return;
+  }
+  const lowPrice = fromServerPrice(low);
+  const highPrice = fromServerPrice(Number(low) + Number(deltaHigh));
+  el.textContent = `${label} h:${highPrice.toFixed(2)} l:${lowPrice.toFixed(2)}`;
 }
 
 // ============================================================
