@@ -7,12 +7,9 @@ import {
   subscribeQuotes,
   quoteEvent,
   createNewOrder,
-  getTrendbarList,
 } from '@spotware-web-team/sdk';
 import { take, tap, catchError } from 'rxjs/operators';
 import { createLogger } from '@veksa/logger';
-
-window.__mainStarted = true;
 
 // ---------- DOM refs ----------
 const symbolSelect = document.getElementById('symbolSelect');
@@ -184,7 +181,6 @@ function loadSymbolDetails(symbolId) {
       currCandleHigh = null;
       currCandleLow = null;
       currCandlePeriodStart = null;
-      loadPrevCandle(symbolId);
       recalculate();
     },
     error: (err) => {
@@ -226,11 +222,8 @@ function fromServerPrice(raw) {
 }
 
 // ============================================================
-// Candle high/low
-// - Previous (completed) candle: fetched once from the server.
-// - Current (live) candle: tracked ourselves from incoming quote
-//   ticks, since it's simpler and more reliable than depending on
-//   an undocumented live-trendbar subscription.
+// Candle high/low — tracked entirely from the live quote ticks we
+// already receive. No extra server call, so nothing new can break.
 // ============================================================
 const CANDLE_MINUTES = 5;
 let currCandleHigh = null;
@@ -245,7 +238,7 @@ function periodStartFor(date) {
 function trackLiveCandle(price) {
   const start = periodStartFor(new Date());
   if (currCandlePeriodStart !== start) {
-    // New period started — the old "current" candle is now the previous one.
+    // New period started — the old "current" candle becomes "prev".
     if (currCandlePeriodStart != null && currCandleHigh != null) {
       prevCandleEl.textContent = `prev h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
     }
@@ -257,51 +250,6 @@ function trackLiveCandle(price) {
     currCandleLow = Math.min(currCandleLow, price);
   }
   currCandleEl.textContent = `now h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
-}
-
-// Fetch the last completed candle once when a symbol loads, so the
-// "prev" line has real data immediately (before we've tracked a
-// full period ourselves).
-function loadPrevCandle(symbolId) {
-  const now = Date.now();
-  const fromTs = now - 30 * 60 * 1000;
-  getTrendbarList(adapter, {
-    symbolId,
-    period: CANDLE_MINUTES === 5 ? 'M5' : 'M1',
-    fromTimestamp: fromTs,
-    toTimestamp: now,
-  })
-    .pipe(take(1))
-    .subscribe({
-      next: (res) => {
-        const data = unwrap(res);
-        const bars = pick(data, 'Trendbar', 'trendbar', 'Trendbars', 'trendbars') || [];
-        if (!bars.length) {
-          debugBox.textContent = 'دیباگ کندل قبلی: خالی بود. پاسخ: ' + JSON.stringify(res).slice(0, 400);
-          return;
-        }
-        const sorted = [...bars].sort((a, b) => {
-          const ta = pick(a, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
-          const tb = pick(b, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
-          return ta - tb;
-        });
-        // The last bar returned by history may still be "in progress" —
-        // use the one before it as the last fully completed candle.
-        const bar = sorted.length >= 2 ? sorted[sorted.length - 2] : sorted[sorted.length - 1];
-        const low = pick(bar, 'Low', 'low');
-        const deltaHigh = pick(bar, 'DeltaHigh', 'deltaHigh') || 0;
-        if (low == null) {
-          debugBox.textContent = 'دیباگ کندل قبلی: فیلد Low پیدا نشد. داده خام: ' + JSON.stringify(bar).slice(0, 400);
-          return;
-        }
-        const lowPrice = fromServerPrice(low);
-        const highPrice = fromServerPrice(Number(low) + Number(deltaHigh));
-        prevCandleEl.textContent = `prev h:${highPrice.toFixed(2)} l:${lowPrice.toFixed(2)}`;
-      },
-      error: (err) => {
-        debugBox.textContent = 'خطا در getTrendbarList: ' + (err?.message || JSON.stringify(err));
-      },
-    });
 }
 
 // ============================================================
