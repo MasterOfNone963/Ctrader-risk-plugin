@@ -105,6 +105,14 @@
     <div class="status" id="statusBox">در حال اتصال به cTrader...</div>
   </div>
 
-  <script type="module" src="/src/main.js"></script>
+  <script>
+    window.__mainStarted = false;
+    setTimeout(function () {
+      if (!window.__mainStarted) {
+        document.getElementById('statusBox').textContent = 'main.bundle.js اجرا نشد (بعد از ۳ ثانیه) — مشکل از build یا مسیر فایل است.';
+      }
+    }, 3000);
+  </script>
+  <script src="/main.bundle.js"></script>
 </body>
 </html>
