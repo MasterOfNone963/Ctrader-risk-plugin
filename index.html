@@ -118,6 +118,9 @@
         box.textContent = 'خطای بارگذاری: ' + (e.message || e.filename || 'unknown') +
           (e.filename ? ' (' + e.filename + ':' + e.lineno + ')' : '');
       });
+      document.addEventListener('securitypolicyviolation', function (e) {
+        box.textContent = 'مسدود شده توسط CSP: ' + e.violatedDirective + ' | منبع مسدودشده: ' + e.blockedURI;
+      });
       setTimeout(function () {
         if (!window.__mainStarted) {
           box.textContent = 'main.js اصلاً اجرا نشد (بعد از ۴ ثانیه). احتمالاً مسیر فایل یا build خراب است.';
