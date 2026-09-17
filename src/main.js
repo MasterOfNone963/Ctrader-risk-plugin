@@ -22,6 +22,7 @@ const sellSideBtn = document.getElementById('sellSideBtn');
 const slInput = document.getElementById('slInput');
 const tpInput = document.getElementById('tpInput');
 const riskInput = document.getElementById('riskInput');
+const balanceInput = document.getElementById('balanceInput');
 const lotResultEl = document.getElementById('lotResult');
 const warnBox = document.getElementById('warnBox');
 const marginInfoEl = document.getElementById('marginInfo');
@@ -39,6 +40,15 @@ let liveBid = null;
 let liveAsk = null;
 let selectedSide = null; // 'BUY' | 'SELL'
 let accountBalance = null;
+
+// Manual balance input is the reliable, instant source of truth.
+// The server fetch (loadAccountInfo) only pre-fills it as a
+// convenience if it responds in time — it never blocks anything.
+function getAccountBalance() {
+  const manual = parseFloat(balanceInput.value);
+  if (!isNaN(manual) && manual > 0) return manual;
+  return accountBalance;
+}
 let lastAutoTP = null;
 
 // ============================================================
@@ -148,6 +158,9 @@ function loadAccountInfo() {
           return;
         }
         accountBalance = Number(balRaw) / 100;
+        if (balanceInput.value.trim() === '') {
+          balanceInput.value = accountBalance.toFixed(2);
+        }
         recalculate();
       },
       error: (err) => {
@@ -403,11 +416,12 @@ function recalculate() {
     // Max affordable risk — independent of whatever is in the risk
     // box right now, purely from SL distance + live price + account
     // balance + leverage. Updates live with every price tick.
-    if (accountBalance != null && currentSymbol.leverage) {
-      const maxRisk = (accountBalance * distance * currentSymbol.leverage) / entryPrice;
+    const balanceNow = getAccountBalance();
+    if (balanceNow != null && currentSymbol.leverage) {
+      const maxRisk = (balanceNow * distance * currentSymbol.leverage) / entryPrice;
       marginInfoEl.textContent = `تا $${maxRisk.toFixed(2)} دلار می‌تونی با این SL ریسک کنی`;
-    } else if (accountBalance == null) {
-      marginInfoEl.textContent = 'در حال دریافت موجودی حساب...';
+    } else if (balanceNow == null) {
+      marginInfoEl.textContent = 'برای دیدن حداکثر ریسک مجاز، موجودی حساب رو بالا وارد کنید.';
     }
   }
 
@@ -453,8 +467,9 @@ function recalculate() {
   lotResultEl.dataset.units = Math.round(volumeInLots * rawLotSize);
 
   // Flag it if the risk they actually typed exceeds what the account can afford.
-  if (accountBalance != null && currentSymbol.leverage) {
-    const maxRisk = (accountBalance * priceDistance * currentSymbol.leverage) / entryPrice;
+  const balanceForCheck = getAccountBalance();
+  if (balanceForCheck != null && currentSymbol.leverage) {
+    const maxRisk = (balanceForCheck * priceDistance * currentSymbol.leverage) / entryPrice;
     if (risk > maxRisk) {
       warnBox.textContent = `⚠️ ریسک واردشده ($${risk}) بیشتر از حداکثر مجاز ($${maxRisk.toFixed(2)}) است.`;
     }
@@ -464,6 +479,7 @@ function recalculate() {
 }
 
 riskInput.addEventListener('input', recalculate);
+balanceInput.addEventListener('input', recalculate);
 slInput.addEventListener('input', recalculate);
 tpInput.addEventListener('input', recalculate);
 
