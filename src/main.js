@@ -7,7 +7,6 @@ import {
   subscribeQuotes,
   quoteEvent,
   createNewOrder,
-  getTrendbarList,
 } from '@spotware-web-team/sdk';
 import { take, tap, catchError } from 'rxjs/operators';
 import { createLogger } from '@veksa/logger';
@@ -182,7 +181,6 @@ function loadSymbolDetails(symbolId) {
       currCandleHigh = null;
       currCandleLow = null;
       currCandlePeriodStart = null;
-      loadPrevCandle(symbolId);
       recalculate();
     },
     error: (err) => {
@@ -254,45 +252,6 @@ function trackLiveCandle(price) {
     currCandleLow = Math.min(currCandleLow, price);
   }
   currCandleEl.textContent = `now h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
-}
-
-// Fetch the last fully-completed candle once, so "prev" is populated
-// immediately instead of waiting for the first period rollover.
-function loadPrevCandle(symbolId) {
-  const now = Date.now();
-  const fromTs = now - 30 * 60 * 1000; // last 30 minutes, enough for several M5 bars
-  getTrendbarList(adapter, {
-    symbolId,
-    period: 'M5',
-    fromTimestamp: fromTs,
-    toTimestamp: now,
-  })
-    .pipe(take(1))
-    .subscribe({
-      next: (res) => {
-        const data = unwrap(res);
-        const bars = pick(data, 'Trendbar', 'trendbar', 'Trendbars', 'trendbars') || [];
-        if (!bars.length) return; // stay silent — live tracking will fill it in soon anyway
-        const sorted = [...bars].sort((a, b) => {
-          const ta = pick(a, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
-          const tb = pick(b, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
-          return ta - tb;
-        });
-        // The last bar in history may still be "in progress" — use the
-        // one before it as the last fully completed candle.
-        const bar = sorted.length >= 2 ? sorted[sorted.length - 2] : sorted[sorted.length - 1];
-        const low = pick(bar, 'Low', 'low');
-        const deltaHigh = pick(bar, 'DeltaHigh', 'deltaHigh') || 0;
-        if (low == null || Number(low) <= 0) return;
-        const lowPrice = fromServerPrice(low);
-        const highPrice = fromServerPrice(Number(low) + Number(deltaHigh));
-        prevCandleEl.textContent = `prev h:${highPrice.toFixed(2)} l:${lowPrice.toFixed(2)}`;
-      },
-      error: () => {
-        // Non-critical: live tracking will populate "prev" naturally
-        // after the first period rollover even if this fails.
-      },
-    });
 }
 
 // ============================================================
