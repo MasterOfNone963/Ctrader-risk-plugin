@@ -7,6 +7,7 @@ import {
   subscribeQuotes,
   quoteEvent,
   createNewOrder,
+  getTrendbarList,
 } from '@spotware-web-team/sdk';
 import { take, tap, catchError } from 'rxjs/operators';
 import { createLogger } from '@veksa/logger';
@@ -181,6 +182,7 @@ function loadSymbolDetails(symbolId) {
       currCandleHigh = null;
       currCandleLow = null;
       currCandlePeriodStart = null;
+      loadPrevCandle(symbolId);
       recalculate();
     },
     error: (err) => {
@@ -206,11 +208,13 @@ function subscribeToQuotes(symbolId) {
     if (qSymbolId !== symbolId) return;
     const bid = pick(q, 'Bid', 'bid');
     const ask = pick(q, 'Ask', 'ask');
-    if (bid != null) liveBid = fromServerPrice(bid);
-    if (ask != null) liveAsk = fromServerPrice(ask);
+    // Ignore spurious zero/empty ticks (e.g. keep-alive pings) —
+    // real bid/ask prices are never 0.
+    if (bid != null && Number(bid) > 0) liveBid = fromServerPrice(bid);
+    if (ask != null && Number(ask) > 0) liveAsk = fromServerPrice(ask);
     bidPriceEl.textContent = liveBid ?? '--';
     askPriceEl.textContent = liveAsk ?? '--';
-    if (liveBid != null) trackLiveCandle(liveBid);
+    if (liveBid != null && liveBid > 0) trackLiveCandle(liveBid);
     recalculate();
   });
 }
@@ -250,6 +254,45 @@ function trackLiveCandle(price) {
     currCandleLow = Math.min(currCandleLow, price);
   }
   currCandleEl.textContent = `now h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
+}
+
+// Fetch the last fully-completed candle once, so "prev" is populated
+// immediately instead of waiting for the first period rollover.
+function loadPrevCandle(symbolId) {
+  const now = Date.now();
+  const fromTs = now - 30 * 60 * 1000; // last 30 minutes, enough for several M5 bars
+  getTrendbarList(adapter, {
+    symbolId,
+    period: 'M5',
+    fromTimestamp: fromTs,
+    toTimestamp: now,
+  })
+    .pipe(take(1))
+    .subscribe({
+      next: (res) => {
+        const data = unwrap(res);
+        const bars = pick(data, 'Trendbar', 'trendbar', 'Trendbars', 'trendbars') || [];
+        if (!bars.length) return; // stay silent — live tracking will fill it in soon anyway
+        const sorted = [...bars].sort((a, b) => {
+          const ta = pick(a, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
+          const tb = pick(b, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
+          return ta - tb;
+        });
+        // The last bar in history may still be "in progress" — use the
+        // one before it as the last fully completed candle.
+        const bar = sorted.length >= 2 ? sorted[sorted.length - 2] : sorted[sorted.length - 1];
+        const low = pick(bar, 'Low', 'low');
+        const deltaHigh = pick(bar, 'DeltaHigh', 'deltaHigh') || 0;
+        if (low == null || Number(low) <= 0) return;
+        const lowPrice = fromServerPrice(low);
+        const highPrice = fromServerPrice(Number(low) + Number(deltaHigh));
+        prevCandleEl.textContent = `prev h:${highPrice.toFixed(2)} l:${lowPrice.toFixed(2)}`;
+      },
+      error: () => {
+        // Non-critical: live tracking will populate "prev" naturally
+        // after the first period rollover even if this fails.
+      },
+    });
 }
 
 // ============================================================
