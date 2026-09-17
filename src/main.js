@@ -24,6 +24,7 @@ const tpInput = document.getElementById('tpInput');
 const riskInput = document.getElementById('riskInput');
 const lotResultEl = document.getElementById('lotResult');
 const warnBox = document.getElementById('warnBox');
+const marginInfoEl = document.getElementById('marginInfo');
 const debugBox = document.getElementById('debugBox');
 const currCandleEl = document.getElementById('currCandle');
 const prevCandleEl = document.getElementById('prevCandle');
@@ -45,6 +46,12 @@ let lastAutoTP = null;
 // ============================================================
 function setStatus(msg) {
   statusBox.textContent = msg;
+}
+// Debug messages accumulate (rather than overwrite each other) so
+// multiple independent issues stay visible at once.
+function logDebug(msg) {
+  const prev = debugBox.textContent;
+  debugBox.textContent = prev ? prev + '\n---\n' + msg : msg;
 }
 window.onerror = function (message, source, lineno) {
   setStatus('خطای جاوااسکریپت: ' + message + ' (خط ' + lineno + ')');
@@ -135,14 +142,14 @@ function loadAccountInfo() {
         const data = unwrap(res);
         const balRaw = pick(data, 'Balance', 'balance');
         if (balRaw == null) {
-          debugBox.textContent = 'دیباگ حساب: فیلد Balance پیدا نشد. پاسخ: ' + JSON.stringify(res).slice(0, 400);
+          logDebug('دیباگ حساب: فیلد Balance پیدا نشد. پاسخ: ' + JSON.stringify(res).slice(0, 400));
           return;
         }
         accountBalance = Number(balRaw) / 100;
         recalculate();
       },
       error: (err) => {
-        debugBox.textContent = 'خطا در getAccountInformation: ' + (err?.message || JSON.stringify(err));
+        logDebug('خطا در getAccountInformation: ' + (err?.message || JSON.stringify(err)));
       },
     });
 }
@@ -153,7 +160,7 @@ function loadSymbols() {
       const data = unwrap(res);
       symbols = pick(data, 'Symbol', 'symbol', 'Symbols', 'symbols') || [];
       if (!symbols.length) {
-        debugBox.textContent = 'دیباگ getLightSymbolList: ' + JSON.stringify(res).slice(0, 500);
+        logDebug('دیباگ getLightSymbolList: ' + JSON.stringify(res).slice(0, 500));
         return;
       }
       symbolSelect.innerHTML = symbols
@@ -173,7 +180,7 @@ function loadSymbols() {
       loadSymbolDetails(defaultId);
     },
     error: (err) => {
-      debugBox.textContent = 'خطا در getLightSymbolList: ' + (err?.message || JSON.stringify(err));
+      logDebug('خطا در getLightSymbolList: ' + (err?.message || JSON.stringify(err)));
     },
   });
 }
@@ -192,7 +199,7 @@ function loadSymbolDetails(symbolId) {
       const list = pick(data, 'Symbol', 'symbol', 'Symbols', 'symbols') || [];
       const raw = list[0];
       if (!raw) {
-        debugBox.textContent = 'دیباگ getSymbol: ' + JSON.stringify(res).slice(0, 500);
+        logDebug('دیباگ getSymbol: ' + JSON.stringify(res).slice(0, 500));
         return;
       }
       currentSymbol = {
@@ -212,7 +219,7 @@ function loadSymbolDetails(symbolId) {
       recalculate();
     },
     error: (err) => {
-      debugBox.textContent = 'خطا در getSymbol: ' + (err?.message || JSON.stringify(err));
+      logDebug('خطا در getSymbol: ' + (err?.message || JSON.stringify(err)));
     },
   });
 }
@@ -224,7 +231,7 @@ let quoteSub;
 function subscribeToQuotes(symbolId) {
   subscribeQuotes(adapter, { symbolId: [symbolId] }).pipe(take(1)).subscribe({
     error: (err) => {
-      debugBox.textContent = 'خطا در subscribeQuotes: ' + (err?.message || JSON.stringify(err));
+      logDebug('خطا در subscribeQuotes: ' + (err?.message || JSON.stringify(err)));
     },
   });
   if (quoteSub) quoteSub.unsubscribe();
@@ -293,7 +300,7 @@ function loadPrevCandle(symbolId) {
   const fromTs = now - 30 * 60 * 1000; // last 30 minutes, enough for several M5 bars
   getTrendbarList(adapter, {
     symbolId,
-    period: 'M5',
+    period: 5, // ProtoOATrendbarPeriod enum: M5 = 5
     fromTimestamp: fromTs,
     toTimestamp: now,
   })
@@ -303,7 +310,7 @@ function loadPrevCandle(symbolId) {
         const data = unwrap(res);
         const bars = pick(data, 'Trendbar', 'trendbar', 'Trendbars', 'trendbars') || [];
         if (!bars.length) {
-          debugBox.textContent = 'دیباگ کندل: پاسخ خالی بود. ' + JSON.stringify(res).slice(0, 400);
+          logDebug('دیباگ کندل: پاسخ خالی بود. ' + JSON.stringify(res).slice(0, 400));
           return;
         }
         const sorted = [...bars].sort((a, b) => {
@@ -338,7 +345,7 @@ function loadPrevCandle(symbolId) {
         }
       },
       error: (err) => {
-        debugBox.textContent = 'خطا در getTrendbarList: ' + (err?.message || JSON.stringify(err));
+        logDebug('خطا در getTrendbarList: ' + (err?.message || JSON.stringify(err)));
       },
     });
 }
@@ -365,6 +372,7 @@ sellSideBtn.addEventListener('click', () => selectSide('SELL'));
 // ============================================================
 function recalculate() {
   warnBox.textContent = '';
+  marginInfoEl.textContent = '';
   const risk = parseFloat(riskInput.value);
   const sl = parseFloat(slInput.value);
   const entryPrice = selectedSide === 'SELL' ? liveBid : liveAsk;
@@ -433,7 +441,11 @@ function recalculate() {
       warnBox.textContent =
         `⚠️ مارجین لازم ($${requiredMargin.toFixed(2)}) بیشتر از موجودی حساب ($${accountBalance.toFixed(2)}) است — ` +
         `با این فاصله‌ی SL، ریسک $${risk} روی این حساب امکان‌پذیر نیست.`;
+    } else {
+      marginInfoEl.textContent = `✔ امکان‌پذیر — مارجین لازم: $${requiredMargin.toFixed(2)} از $${accountBalance.toFixed(2)} موجودی`;
     }
+  } else if (accountBalance == null) {
+    marginInfoEl.textContent = 'در حال دریافت موجودی حساب...';
   }
 
   updateConfirmButton();
