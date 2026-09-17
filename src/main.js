@@ -135,10 +135,12 @@ setTimeout(() => {
 // ============================================================
 // Fetch account balance once, used later for the margin/affordability check.
 function loadAccountInfo() {
+  let responded = false;
   getAccountInformation(adapter, {})
     .pipe(take(1))
     .subscribe({
       next: (res) => {
+        responded = true;
         const data = unwrap(res);
         const balRaw = pick(data, 'Balance', 'balance');
         if (balRaw == null) {
@@ -149,9 +151,15 @@ function loadAccountInfo() {
         recalculate();
       },
       error: (err) => {
+        responded = true;
         logDebug('خطا در getAccountInformation: ' + (err?.message || JSON.stringify(err)));
       },
     });
+  setTimeout(() => {
+    if (!responded) {
+      logDebug('هاست به درخواست getAccountInformation بعد از ۶ ثانیه جواب نداد.');
+    }
+  }, 6000);
 }
 
 function loadSymbols() {
@@ -391,6 +399,16 @@ function recalculate() {
       tpInput.value = roundedTP;
       lastAutoTP = roundedTP;
     }
+
+    // Max affordable risk — independent of whatever is in the risk
+    // box right now, purely from SL distance + live price + account
+    // balance + leverage. Updates live with every price tick.
+    if (accountBalance != null && currentSymbol.leverage) {
+      const maxRisk = (accountBalance * distance * currentSymbol.leverage) / entryPrice;
+      marginInfoEl.textContent = `تا $${maxRisk.toFixed(2)} دلار می‌تونی با این SL ریسک کنی`;
+    } else if (accountBalance == null) {
+      marginInfoEl.textContent = 'در حال دریافت موجودی حساب...';
+    }
   }
 
   if (!currentSymbol || !selectedSide || !risk || !sl || !entryPrice) {
@@ -434,18 +452,12 @@ function recalculate() {
   // correctly against the broker).
   lotResultEl.dataset.units = Math.round(volumeInLots * rawLotSize);
 
-  // Margin/affordability check against the account balance.
+  // Flag it if the risk they actually typed exceeds what the account can afford.
   if (accountBalance != null && currentSymbol.leverage) {
-    const requiredMargin = (volumeInLots * realContractSize * entryPrice) / currentSymbol.leverage;
-    if (requiredMargin > accountBalance) {
-      warnBox.textContent =
-        `⚠️ مارجین لازم ($${requiredMargin.toFixed(2)}) بیشتر از موجودی حساب ($${accountBalance.toFixed(2)}) است — ` +
-        `با این فاصله‌ی SL، ریسک $${risk} روی این حساب امکان‌پذیر نیست.`;
-    } else {
-      marginInfoEl.textContent = `✔ امکان‌پذیر — مارجین لازم: $${requiredMargin.toFixed(2)} از $${accountBalance.toFixed(2)} موجودی`;
+    const maxRisk = (accountBalance * priceDistance * currentSymbol.leverage) / entryPrice;
+    if (risk > maxRisk) {
+      warnBox.textContent = `⚠️ ریسک واردشده ($${risk}) بیشتر از حداکثر مجاز ($${maxRisk.toFixed(2)}) است.`;
     }
-  } else if (accountBalance == null) {
-    marginInfoEl.textContent = 'در حال دریافت موجودی حساب...';
   }
 
   updateConfirmButton();
