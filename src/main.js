@@ -7,6 +7,8 @@ import {
   subscribeQuotes,
   quoteEvent,
   createNewOrder,
+  getTrendbarList,
+  getAccountInformation,
 } from '@spotware-web-team/sdk';
 import { take, tap, catchError } from 'rxjs/operators';
 import { createLogger } from '@veksa/logger';
@@ -35,6 +37,8 @@ let currentSymbol = null;
 let liveBid = null;
 let liveAsk = null;
 let selectedSide = null; // 'BUY' | 'SELL'
+let accountBalance = null;
+let lastAutoTP = null;
 
 // ============================================================
 // DEBUG HELPERS
@@ -104,6 +108,7 @@ registerEvent(adapter)
       handleConfirmEvent(adapter, {}).pipe(take(1)).subscribe();
       setStatus('متصل به cTrader ✔');
       loadSymbols();
+      loadAccountInfo();
     }),
     catchError((err) => {
       setStatus('خطا در register: ' + (err?.message || JSON.stringify(err)));
@@ -121,6 +126,27 @@ setTimeout(() => {
 // ============================================================
 // 2) Load symbol list -> fill dropdown
 // ============================================================
+// Fetch account balance once, used later for the margin/affordability check.
+function loadAccountInfo() {
+  getAccountInformation(adapter, {})
+    .pipe(take(1))
+    .subscribe({
+      next: (res) => {
+        const data = unwrap(res);
+        const balRaw = pick(data, 'Balance', 'balance');
+        if (balRaw == null) {
+          debugBox.textContent = 'دیباگ حساب: فیلد Balance پیدا نشد. پاسخ: ' + JSON.stringify(res).slice(0, 400);
+          return;
+        }
+        accountBalance = Number(balRaw) / 100;
+        recalculate();
+      },
+      error: (err) => {
+        debugBox.textContent = 'خطا در getAccountInformation: ' + (err?.message || JSON.stringify(err));
+      },
+    });
+}
+
 function loadSymbols() {
   getLightSymbolList(adapter, {}).pipe(take(1)).subscribe({
     next: (res) => {
@@ -175,12 +201,14 @@ function loadSymbolDetails(symbolId) {
         minVolume: pick(raw, 'MinVolume', 'minVolume'),
         maxVolume: pick(raw, 'MaxVolume', 'maxVolume'),
         stepVolume: pick(raw, 'StepVolume', 'stepVolume'),
+        leverage: pick(raw, 'Leverage', 'leverage'),
       };
       debugBox.textContent = '';
       subscribeToQuotes(symbolId);
       currCandleHigh = null;
       currCandleLow = null;
       currCandlePeriodStart = null;
+      loadPrevCandle(symbolId);
       recalculate();
     },
     error: (err) => {
@@ -254,6 +282,67 @@ function trackLiveCandle(price) {
   currCandleEl.textContent = `now h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
 }
 
+// Fetch real M5 history once when a symbol loads: shows "prev" (last
+// fully-completed candle) immediately, and seeds the live "now"
+// tracker with the real in-progress candle's current high/low
+// instead of starting fresh from whatever price happens to arrive
+// first — so "now" stays accurate even if the panel was opened
+// mid-candle.
+function loadPrevCandle(symbolId) {
+  const now = Date.now();
+  const fromTs = now - 30 * 60 * 1000; // last 30 minutes, enough for several M5 bars
+  getTrendbarList(adapter, {
+    symbolId,
+    period: 'M5',
+    fromTimestamp: fromTs,
+    toTimestamp: now,
+  })
+    .pipe(take(1))
+    .subscribe({
+      next: (res) => {
+        const data = unwrap(res);
+        const bars = pick(data, 'Trendbar', 'trendbar', 'Trendbars', 'trendbars') || [];
+        if (!bars.length) {
+          debugBox.textContent = 'دیباگ کندل: پاسخ خالی بود. ' + JSON.stringify(res).slice(0, 400);
+          return;
+        }
+        const sorted = [...bars].sort((a, b) => {
+          const ta = pick(a, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
+          const tb = pick(b, 'UtcTimestampInMinutes', 'utcTimestampInMinutes') || 0;
+          return ta - tb;
+        });
+        const barToHL = (bar) => {
+          const low = pick(bar, 'Low', 'low');
+          const deltaHigh = pick(bar, 'DeltaHigh', 'deltaHigh') || 0;
+          if (low == null || Number(low) <= 0) return null;
+          return {
+            low: fromServerPrice(low),
+            high: fromServerPrice(Number(low) + Number(deltaHigh)),
+          };
+        };
+
+        if (sorted.length >= 2) {
+          const prevHL = barToHL(sorted[sorted.length - 2]);
+          if (prevHL) {
+            prevCandleEl.textContent = `prev h:${prevHL.high.toFixed(2)} l:${prevHL.low.toFixed(2)}`;
+          }
+        }
+
+        const currBar = sorted[sorted.length - 1];
+        const currHL = barToHL(currBar);
+        if (currHL) {
+          currCandlePeriodStart = periodStartFor(new Date());
+          currCandleHigh = currHL.high;
+          currCandleLow = currHL.low;
+          currCandleEl.textContent = `now h:${currCandleHigh.toFixed(2)} l:${currCandleLow.toFixed(2)}`;
+        }
+      },
+      error: (err) => {
+        debugBox.textContent = 'خطا در getTrendbarList: ' + (err?.message || JSON.stringify(err));
+      },
+    });
+}
+
 // ============================================================
 // 5) Side selection (Buy / Sell) — step 1
 // ============================================================
@@ -279,6 +368,22 @@ function recalculate() {
   const risk = parseFloat(riskInput.value);
   const sl = parseFloat(slInput.value);
   const entryPrice = selectedSide === 'SELL' ? liveBid : liveAsk;
+
+  // Auto-calc TP1 (1:1 risk:reward) — independent of the risk field,
+  // so it updates as soon as SL/side/price are known, and keeps
+  // following the live price. Skipped if the user has typed their
+  // own TP value that doesn't match our last auto-computed one.
+  if (currentSymbol && selectedSide && sl && entryPrice) {
+    const distance = Math.abs(entryPrice - sl);
+    const rrRatio = 1; // 1:1 per the user's choice
+    const autoTP = selectedSide === 'BUY' ? entryPrice + distance * rrRatio : entryPrice - distance * rrRatio;
+    const roundedTP = parseFloat(autoTP.toFixed(5));
+    const currentTpText = tpInput.value.trim();
+    if (currentTpText === '' || (lastAutoTP != null && parseFloat(currentTpText) === lastAutoTP)) {
+      tpInput.value = roundedTP;
+      lastAutoTP = roundedTP;
+    }
+  }
 
   if (!currentSymbol || !selectedSide || !risk || !sl || !entryPrice) {
     lotResultEl.textContent = '--';
@@ -320,6 +425,17 @@ function recalculate() {
   // (this is the value that has already been confirmed to execute
   // correctly against the broker).
   lotResultEl.dataset.units = Math.round(volumeInLots * rawLotSize);
+
+  // Margin/affordability check against the account balance.
+  if (accountBalance != null && currentSymbol.leverage) {
+    const requiredMargin = (volumeInLots * realContractSize * entryPrice) / currentSymbol.leverage;
+    if (requiredMargin > accountBalance) {
+      warnBox.textContent =
+        `⚠️ مارجین لازم ($${requiredMargin.toFixed(2)}) بیشتر از موجودی حساب ($${accountBalance.toFixed(2)}) است — ` +
+        `با این فاصله‌ی SL، ریسک $${risk} روی این حساب امکان‌پذیر نیست.`;
+    }
+  }
+
   updateConfirmButton();
 }
 
